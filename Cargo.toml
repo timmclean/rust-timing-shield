@@ -1,0 +1,7 @@
+[package]
+name = "timing-shield"
+version = "0.1.0"
+authors = ["Tim McLean <tim@timmclean.net>"]
+
+[dev-dependencies]
+quickcheck = "0.4.1"
