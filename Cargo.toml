@@ -2,6 +2,12 @@
 name = "timing-shield"
 version = "0.1.0"
 authors = ["Tim McLean <tim@timmclean.net>"]
+description = "Comprehensive timing leak protection for Rust."
+homepage = "https://www.chosenplaintext.ca/open-source/rust-timing-shield/"
+repository = "https://github.com/timmclean/rust-timing-shield"
+categories = ["cryptography"]
+keywords = ["constant-time", "constant", "time", "crypto"]
+license = "MIT"
 
 [dev-dependencies]
 quickcheck = "0.4.1"
