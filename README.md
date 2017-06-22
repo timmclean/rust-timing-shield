@@ -1,7 +1,6 @@
 # rust-timing-shield
 
-rust-timing-shield provides Rust programs with comprehensive protection from
-timing attacks.
+Comprehensive timing attack protection for Rust programs.
 
 One of the fundamental challenges of writing software that operates on sensitive information
 is preventing *timing leaks*. A timing leak is when there exists a relationship between the
