@@ -1,7 +1,5 @@
 # rust-timing-shield
 
-Project home page: https://www.chosenplaintext.ca/open-source/rust-timing-shield/
-
 rust-timing-shield provides Rust programs with comprehensive protection from
 timing attacks.
 
@@ -13,18 +11,20 @@ high-resolution timer to learn secret information that they would not normally b
 access (e.g. extract an SSL key from a web server).
 
 To prevent timing leaks in cryptography code, it is best practice to write code that is
-*constant-time*. For a full background on writing constant-time code, see [A beginner's guide
-to constant-time
+*constant-time*. For a full background on writing constant-time code, see
+[A beginner's guide to constant-time
 cryptography](https://www.chosenplaintext.ca/articles/beginners-guide-constant-time-cryptography.html).
 
 rust-timing-shield is a framework for writing code without timing leaks.
-See the [Getting Started
-page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
-information.
+See the
+[Getting Started page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started)
+or the
+[project home page](https://www.chosenplaintext.ca/open-source/rust-timing-shield)
+for more information.
 
 ## Reporting security vulnerabilities
 
-Please visit [the Security
+Please visit the [Security
 page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/security)
 for more information.
 
