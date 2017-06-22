@@ -2,7 +2,7 @@
 
 Project home page: https://www.chosenplaintext.ca/open-source/rust-timing-shield/
 
-`rust-timing-shield` provides Rust programs with comprehensive protection from
+rust-timing-shield provides Rust programs with comprehensive protection from
 timing attacks.
 
 One of the fundamental challenges of writing software that operates on sensitive information
@@ -17,7 +17,7 @@ To prevent timing leaks in cryptography code, it is best practice to write code 
 to constant-time
 cryptography](https://www.chosenplaintext.ca/articles/beginners-guide-constant-time-cryptography.html).
 
-`rust-timing-shield` is a framework for writing code without timing leaks.
+rust-timing-shield is a framework for writing code without timing leaks.
 See the [Getting Started
 page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 information.
