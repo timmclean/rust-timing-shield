@@ -1,6 +1,6 @@
 [package]
 name = "timing-shield"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Tim McLean <tim@timmclean.net>"]
 description = "Comprehensive timing leak protection for Rust."
 homepage = "https://www.chosenplaintext.ca/open-source/rust-timing-shield/"
