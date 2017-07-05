@@ -319,6 +319,30 @@ macro_rules! define_number_type {
 
             $($methods)*
 
+            /// Shifts left by `n` bits, wrapping truncated bits around to the right side of the
+            /// resulting value.
+            ///
+            /// If `n` is larger than the bitwidth of this number type,
+            /// `n` is reduced mod that bitwidth.
+            /// For example, rotating an `i16` with `n = 35` is equivalent to rotating with `n =
+            /// 3`, since `35 = 3  mod 16`.
+            #[inline(always)]
+            pub fn rotate_left(self, n: u32) -> Self {
+                $tp_type(self.0.rotate_left(n))
+            }
+
+            /// Shifts right by `n` bits, wrapping truncated bits around to the left side of the
+            /// resulting value.
+            ///
+            /// If `n` is larger than the bitwidth of this number type,
+            /// `n` is reduced mod that bitwidth.
+            /// For example, rotating an `i16` with `n = 35` is equivalent to rotating with `n =
+            /// 3`, since `35 = 3  mod 16`.
+            #[inline(always)]
+            pub fn rotate_right(self, n: u32) -> Self {
+                $tp_type(self.0.rotate_right(n))
+            }
+
             /// Remove the timing protection and expose the raw number value.
             /// Once a value is exposed, it is the library user's responsibility to prevent timing
             /// leaks (if necessary).
@@ -1021,13 +1045,23 @@ mod tests {
                         }
 
                         fn shl_leak_rhs(l: $type, r: u32) -> bool {
-                            let mask = $type::count_zeros(0) - 1;
-                            (l << (r & mask)) == (protect(l) << r).expose()
+                            let bits = $type::count_zeros(0);
+                            (l << (r % bits)) == (protect(l) << r).expose()
                         }
 
                         fn shr_leak_rhs(l: $type, r: u32) -> bool {
-                            let mask = $type::count_zeros(0) - 1;
-                            (l >> (r & mask)) == (protect(l) >> r).expose()
+                            let bits = $type::count_zeros(0);
+                            (l >> (r % bits)) == (protect(l) >> r).expose()
+                        }
+
+                        fn rotate_left_leak_rhs(l: $type, r: u32) -> bool {
+                            let bits = $type::count_zeros(0);
+                            (l.rotate_left(r % bits)) == protect(l).rotate_left(r).expose()
+                        }
+
+                        fn rotate_right_leak_rhs(l: $type, r: u32) -> bool {
+                            let bits = $type::count_zeros(0);
+                            (l.rotate_right(r % bits)) == protect(l).rotate_right(r).expose()
                         }
                     }
                 }
@@ -1264,10 +1298,7 @@ mod tests {
     }
 }
 
-// TODO audit constant-time-ness, document security arguments
-// TODO vectors, arrays
 // TODO assume barrel shifter on x86?
 // TODO impl TpCondSwap for tuples
-// TODO explain risks of future optimizations
 // TODO explain downsides (e.g. secret constants will get leaked through constant
 // folding/propagation)
