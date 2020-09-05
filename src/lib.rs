@@ -21,7 +21,7 @@
 //! page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 //! information.
 
-#![feature(asm, i128_type, specialization)]
+#![feature(llvm_asm, specialization)]
 
 #[cfg(test)]
 #[macro_use]
@@ -773,7 +773,7 @@ impl TpBool {
         // Optimization barrier
         let output;
         unsafe {
-            asm!("" : "=r"(output) : "0"(input_u8));
+            llvm_asm!("" : "=r"(output) : "0"(input_u8));
         }
 
         TpBool(output)
@@ -799,7 +799,7 @@ impl TpBool {
         // Optimization barrier
         let output;
         unsafe {
-            asm!("" : "=r"(output) : "0"(self.0));
+            llvm_asm!("" : "=r"(output) : "0"(self.0));
         }
 
         output
