@@ -8,6 +8,7 @@ repository = "https://github.com/timmclean/rust-timing-shield"
 categories = ["cryptography"]
 keywords = ["constant-time", "constant", "time", "crypto"]
 license = "MIT"
+readme = "README.md"
 
 [dev-dependencies]
 quickcheck = "0.9.2"
