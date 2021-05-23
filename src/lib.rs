@@ -441,7 +441,7 @@ macro_rules! define_number_type {
                 }
 
                 let acc = self.iter().zip(other.iter())
-                    .fold($tp_type(0), |prev, (&a, &b)| prev | a ^ b);
+                    .fold($tp_type(0), |prev, (&a, &b)| prev | (a ^ b));
                 acc.tp_eq(&0)
             }
 
@@ -452,7 +452,7 @@ macro_rules! define_number_type {
                 }
 
                 let acc = self.iter().zip(other.iter())
-                    .fold($tp_type(0), |prev, (&a, &b)| prev | a ^ b);
+                    .fold($tp_type(0), |prev, (&a, &b)| prev | (a ^ b));
                 acc.tp_not_eq(&0)
             }
         }
@@ -888,20 +888,21 @@ mod tests {
     macro_rules! test_tp_eq {
         (
             $test_name:ident,
-            ($lhs_var:ident : $lhs_type:ident) => $lhs_expr:expr,
-            ($rhs_var:ident : $rhs_type:ident) => $rhs_expr:expr
+            ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
+            ($rhs_var:ident : $rhs_type:ty) => $rhs_expr:expr
         ) => {
             quickcheck! {
                 fn $test_name(lhs: $lhs_type, rhs: $rhs_type) -> bool {
                     let lhs_tp = {
-                        let $lhs_var = lhs;
+                        let $lhs_var = lhs.clone();
                         $lhs_expr
                     };
                     let rhs_tp = {
-                        let $rhs_var = rhs;
+                        let $rhs_var = rhs.clone();
                         $rhs_expr
                     };
-                    (lhs == rhs) == (lhs_tp.tp_eq(&rhs_tp).expose())
+                    ((lhs == rhs) == (lhs_tp.tp_eq(&rhs_tp).expose()))
+                        && ((lhs != rhs) == (lhs_tp.tp_not_eq(&rhs_tp).expose()))
                 }
             }
         }
@@ -1084,6 +1085,31 @@ mod tests {
                         (l: $type) => $tp_type::protect(l),
                         (r: $type) => r
                     );
+
+                }
+
+                // Numeric types have a specialized implementation of TpEq for slices, so we'll
+                // test that separately.
+                mod slice_tp_eq {
+                    use super::*;
+
+                    quickcheck! {
+                        fn no_leak(l: Vec<$type>, r: Vec<$type>) -> bool {
+                            let lhs = l.clone()
+                                .into_iter()
+                                .map(|n| $tp_type::protect(n))
+                                .collect::<Vec<_>>();
+                            let rhs = r.clone()
+                                .into_iter()
+                                .map(|n| $tp_type::protect(n))
+                                .collect::<Vec<_>>();
+                            let lhs_slice: &[_] = &lhs;
+                            let rhs_slice: &[_] = &rhs;
+
+                            ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                                && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
+                        }
+                    }
                 }
 
                 mod tp_ord {

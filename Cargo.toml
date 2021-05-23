@@ -10,4 +10,4 @@ keywords = ["constant-time", "constant", "time", "crypto"]
 license = "MIT"
 
 [dev-dependencies]
-quickcheck = "0.4.1"
+quickcheck = "0.9.2"
