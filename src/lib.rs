@@ -1,4 +1,4 @@
-// Copyright 2017 Tim McLean
+// Copyright 2017-2021 Tim McLean
 
 //! Comprehensive timing attack protection for Rust programs.
 //!
@@ -21,10 +21,9 @@
 //! page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 //! information.
 
-#![feature(asm, i128_type, specialization)]
+#![feature(llvm_asm, min_specialization)]
 
 #[cfg(test)]
-#[macro_use]
 extern crate quickcheck;
 
 use std::ops::Add;
@@ -773,7 +772,7 @@ impl TpBool {
         // Optimization barrier
         let output;
         unsafe {
-            asm!("" : "=r"(output) : "0"(input_u8));
+            llvm_asm!("" : "=r"(output) : "0"(input_u8));
         }
 
         TpBool(output)
@@ -799,7 +798,7 @@ impl TpBool {
         // Optimization barrier
         let output;
         unsafe {
-            asm!("" : "=r"(output) : "0"(self.0));
+            llvm_asm!("" : "=r"(output) : "0"(self.0));
         }
 
         output
@@ -881,6 +880,7 @@ impl TpCondSwap for TpBool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::quickcheck;
 
     // The separate modules in the tests below are to work around limitations of Rust macros
     // (concat_idents does not work in function definitions)
