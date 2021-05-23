@@ -2,7 +2,7 @@
 
 //! Comprehensive timing attack protection for Rust programs.
 //!
-//! Project home page: https://www.chosenplaintext.ca/open-source/rust-timing-shield/
+//! Project home page: <https://www.chosenplaintext.ca/open-source/rust-timing-shield/>
 //!
 //! One of the fundamental challenges of writing software that operates on sensitive information
 //! is preventing *timing leaks*. A timing leak is when there exists a relationship between the
@@ -21,10 +21,12 @@
 //! page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 //! information.
 
-#![feature(llvm_asm, min_specialization)]
+#![feature(asm, min_specialization)]
 
 #[cfg(test)]
 extern crate quickcheck;
+
+pub mod barriers;
 
 use std::ops::Add;
 use std::ops::AddAssign;
@@ -44,6 +46,8 @@ use std::ops::Shr;
 use std::ops::ShrAssign;
 use std::ops::Neg;
 use std::ops::Not;
+
+use barriers::optimization_barrier_u8;
 
 macro_rules! impl_unary_op {
     (
@@ -769,13 +773,10 @@ impl TpBool {
         // LLVM IR: input_u8 = zext i1 input to i8
         let input_u8 = input as u8;
 
-        // Optimization barrier
-        let output;
-        unsafe {
-            llvm_asm!("" : "=r"(output) : "0"(input_u8));
-        }
+        // Place an optimization barrier to hide that the u8 was originally a bool
+        let input_u8 = optimization_barrier_u8(input_u8);
 
-        TpBool(output)
+        TpBool(input_u8)
     }
 
     impl_as!(TpU8 , u8 , as_u8 );
@@ -795,13 +796,12 @@ impl TpBool {
     /// signature verification).
     #[inline(always)]
     pub fn expose(self) -> bool {
-        // Optimization barrier
-        let output;
-        unsafe {
-            llvm_asm!("" : "=r"(output) : "0"(self.0));
-        }
+        let bool_as_u8: u8 = optimization_barrier_u8(self.0);
 
-        output
+        unsafe {
+            // Safe as long as TpBool correctly maintains the invariant that self.0 is 0 or 1
+            std::mem::transmute::<u8, bool>(bool_as_u8)
+        }
     }
 
     /// Constant-time conditional swap. Swaps `a` and `b` if this boolean is true, otherwise has no
@@ -817,7 +817,7 @@ impl TpBool {
     /// about which value was selected will be leaked.
     #[inline(always)]
     pub fn select<T>(self, when_true: T, when_false: T) -> T where T: TpCondSwap {
-        // TODO is this efficient?
+        // TODO is this optimal?
         // seems to compile to use NEG instead of DEC
         // NEG clobbers the carry flag, so arguably DEC could be better
 
