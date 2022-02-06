@@ -157,7 +157,7 @@
 #[inline(always)]
 pub fn optimization_barrier_u8(mut value: u8) -> u8 {
     unsafe {
-        asm!(
+        std::arch::asm!(
             // Rust requires us to use every register defined, so we use it inside of a comment.
             "/* optimization_barrier_u8 {unused} */",
 

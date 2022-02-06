@@ -1,4 +1,4 @@
-// Copyright 2017-2021 Tim McLean
+// Copyright 2017-2022 Tim McLean
 
 //! Comprehensive timing attack protection for Rust programs.
 //!
@@ -21,7 +21,7 @@
 //! page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 //! information.
 
-#![feature(asm, min_specialization)]
+#![feature(min_specialization)]
 
 #[cfg(test)]
 extern crate quickcheck;
