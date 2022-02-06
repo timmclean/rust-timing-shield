@@ -9,6 +9,7 @@ categories = ["cryptography"]
 keywords = ["constant-time", "constant", "time", "crypto"]
 license = "MIT"
 readme = "README.md"
+edition = "2018"
 
 [dev-dependencies]
 quickcheck = "0.9.2"

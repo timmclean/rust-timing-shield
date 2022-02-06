@@ -47,7 +47,7 @@ use std::ops::ShrAssign;
 use std::ops::Neg;
 use std::ops::Not;
 
-use barriers::optimization_barrier_u8;
+use crate::barriers::optimization_barrier_u8;
 
 macro_rules! impl_unary_op {
     (
