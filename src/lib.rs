@@ -359,7 +359,6 @@ macro_rules! define_number_type {
         /// // If needed, remove protection using `expose`
         /// println!("{}", x.expose());
         /// ```
-        #[cfg(target_arch = "x86_64")]
         #[derive(Clone, Copy)]
         pub struct $tp_type($type);
 
@@ -854,7 +853,6 @@ impl_unary_op!(Neg, neg, TpI64, TpI64);
 ///
 /// Note that `&` and `|` are provided instead of `&&` and `||` because the usual boolean
 /// short-circuiting behaviour leaks information about the values of the booleans.
-#[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy)]
 pub struct TpBool(u8);
 
