@@ -21,8 +21,6 @@
 //! page](https://www.chosenplaintext.ca/open-source/rust-timing-shield/getting-started) for more
 //! information.
 
-#![feature(min_specialization)]
-
 #[cfg(test)]
 extern crate quickcheck;
 
@@ -225,6 +223,51 @@ macro_rules! impl_tp_eq_for_number {
             TpBool((unsigned_msb_iff_zero_diff >> (type_bitwidth - 1)) as u8)
         });
     }
+}
+
+macro_rules! impl_slice_tp_eq {
+    (
+        $lhs_type:ty,
+        $rhs_type:ty,
+        fold_eq {
+            initial: $eq_initial:expr,
+            fold: ($eq_fold_acc:ident, $eq_fold_elem_left:ident, $eq_fold_elem_right:ident) => $eq_fold_expr:expr,
+            final: ($eq_acc:ident) => $eq_final_expr:expr,
+        }
+        fold_not_eq {
+            initial: $not_eq_initial:expr,
+            fold: ($not_eq_fold_acc:ident, $not_eq_fold_elem_left:ident, $not_eq_fold_elem_right:ident) => $not_eq_fold_expr:expr,
+            final: ($not_eq_acc:ident) => $not_eq_final_expr:expr,
+        }
+    ) => {
+        impl SliceTpEq<$rhs_type> for $lhs_type {
+            fn slice_eq(a: &[Self], b: &[$rhs_type]) -> TpBool {
+                if a.len() != b.len() {
+                    return TP_FALSE;
+                }
+
+                let $eq_acc = a.iter().zip(b.iter()).fold(
+                    $eq_initial,
+                    |$eq_fold_acc, ($eq_fold_elem_left, $eq_fold_elem_right)| $eq_fold_expr,
+                );
+                $eq_final_expr
+            }
+
+            fn slice_not_eq(a: &[Self], b: &[$rhs_type]) -> TpBool {
+                if a.len() != b.len() {
+                    return TP_TRUE;
+                }
+
+                let $not_eq_acc = a.iter().zip(b.iter()).fold(
+                    $not_eq_initial,
+                    |$not_eq_fold_acc, ($not_eq_fold_elem_left, $not_eq_fold_elem_right)| {
+                        $not_eq_fold_expr
+                    },
+                );
+                $not_eq_final_expr
+            }
+        }
+    };
 }
 
 macro_rules! impl_tp_ord {
@@ -431,6 +474,49 @@ macro_rules! define_number_type {
         impl_tp_eq_for_number!($type, (l: $type   ) => l  , (r: $tp_type) => r.0);
         impl_tp_eq_for_number!($type, (l: $tp_type) => l.0, (r: $type   ) => r  );
 
+        impl_slice_tp_eq!(
+            $tp_type,
+            $tp_type,
+            fold_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_eq(&0),
+            }
+            fold_not_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_not_eq(&0),
+            }
+        );
+        impl_slice_tp_eq!(
+            $type,
+            $tp_type,
+            fold_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_eq(&0),
+            }
+            fold_not_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_not_eq(&0),
+            }
+        );
+        impl_slice_tp_eq!(
+            $tp_type,
+            $type,
+            fold_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_eq(&0),
+            }
+            fold_not_eq {
+                initial: $tp_type(0),
+                fold: (acc, a, b) => acc | (*a ^ *b),
+                final: (acc) => acc.tp_not_eq(&0),
+            }
+        );
+
         impl_tp_ord!($tp_type, $tp_type, tp_lt(l, r) => {
             let $tp_lt_lhs_var = l.0;
             let $tp_lt_rhs_var = r.0;
@@ -448,30 +534,6 @@ macro_rules! define_number_type {
         });
 
         impl_tp_cond_swap_with_xor!($tp_type, $type);
-
-        impl TpEq for [$tp_type] {
-            #[inline(always)]
-            fn tp_eq(&self, other: &[$tp_type]) -> TpBool {
-                if self.len() != other.len() {
-                    return TP_FALSE;
-                }
-
-                let acc = self.iter().zip(other.iter())
-                    .fold($tp_type(0), |prev, (&a, &b)| prev | (a ^ b));
-                acc.tp_eq(&0)
-            }
-
-            #[inline(always)]
-            fn tp_not_eq(&self, other: &[$tp_type]) -> TpBool {
-                if self.len() != other.len() {
-                    return TP_TRUE;
-                }
-
-                let acc = self.iter().zip(other.iter())
-                    .fold($tp_type(0), |prev, (&a, &b)| prev | (a ^ b));
-                acc.tp_not_eq(&0)
-            }
-        }
     }
 }
 
@@ -502,6 +564,56 @@ where
     ///
     /// Equivalent to `!a.tp_eq(&other)`
     fn tp_not_eq(&self, other: &Rhs) -> TpBool;
+}
+
+pub trait SliceTpEq<Rhs = Self>: TpEq<Rhs> + Sized {
+    fn slice_eq(a: &[Self], b: &[Rhs]) -> TpBool {
+        if a.len() != b.len() {
+            return TP_FALSE;
+        }
+
+        a.iter()
+            .zip(b.iter())
+            .fold(TP_TRUE, |prev, (a, b)| prev & a.tp_eq(b))
+    }
+
+    fn slice_not_eq(a: &[Self], b: &[Rhs]) -> TpBool {
+        if a.len() != b.len() {
+            return TP_FALSE;
+        }
+
+        a.iter()
+            .zip(b.iter())
+            .fold(TP_FALSE, |prev, (a, b)| prev | a.tp_not_eq(b))
+    }
+}
+
+impl<Lhs, Rhs> TpEq<[Rhs]> for [Lhs]
+where
+    Lhs: SliceTpEq<Rhs>,
+{
+    fn tp_eq(&self, other: &[Rhs]) -> TpBool {
+        Lhs::slice_eq(self, other)
+    }
+
+    fn tp_not_eq(&self, other: &[Rhs]) -> TpBool {
+        Lhs::slice_not_eq(self, other)
+    }
+}
+
+impl<Lhs, Rhs> TpEq<Vec<Rhs>> for Vec<Lhs>
+where
+    Lhs: SliceTpEq<Rhs>,
+{
+    #[inline(always)]
+    fn tp_eq(&self, other: &Vec<Rhs>) -> TpBool {
+        self[..].tp_eq(&other[..])
+    }
+
+    #[inline(always)]
+    fn tp_not_eq(&self, other: &Vec<Rhs>) -> TpBool {
+        self[..].tp_not_eq(&other[..])
+    }
 }
 
 /// A trait for performing comparisons on types with timing leak protection.
@@ -570,48 +682,6 @@ pub trait TpCondSwap {
     ///
     /// Implementers of this trait must take care to avoid leaking whether the swap occurred.
     fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self);
-}
-
-impl<T> TpEq for [T]
-where
-    T: TpEq,
-{
-    #[inline(always)]
-    default fn tp_eq(&self, other: &[T]) -> TpBool {
-        if self.len() != other.len() {
-            return TP_FALSE;
-        }
-
-        self.iter()
-            .zip(other.iter())
-            .fold(TP_TRUE, |prev, (a, b)| prev & a.tp_eq(b))
-    }
-
-    #[inline(always)]
-    default fn tp_not_eq(&self, other: &[T]) -> TpBool {
-        if self.len() != other.len() {
-            return TP_FALSE;
-        }
-
-        self.iter()
-            .zip(other.iter())
-            .fold(TP_FALSE, |prev, (a, b)| prev | a.tp_not_eq(b))
-    }
-}
-
-impl<T> TpEq for Vec<T>
-where
-    T: TpEq,
-{
-    #[inline(always)]
-    fn tp_eq(&self, other: &Vec<T>) -> TpBool {
-        self[..].tp_eq(&other[..])
-    }
-
-    #[inline(always)]
-    fn tp_not_eq(&self, other: &Vec<T>) -> TpBool {
-        self[..].tp_not_eq(&other[..])
-    }
 }
 
 impl<T> TpCondSwap for [T]
@@ -909,6 +979,49 @@ impl_tp_eq!(TpBool, bool, (l, r) => {
     TpBool(l.0 ^ (*r as u8)).not()
 });
 
+impl_slice_tp_eq!(
+    TpBool,
+    TpBool,
+    fold_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => !acc,
+    }
+    fold_not_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => acc,
+    }
+);
+impl_slice_tp_eq!(
+    bool,
+    TpBool,
+    fold_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => !acc,
+    }
+    fold_not_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => acc,
+    }
+);
+impl_slice_tp_eq!(
+    TpBool,
+    bool,
+    fold_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => !acc,
+    }
+    fold_not_eq {
+        initial: TP_FALSE,
+        fold: (acc, a, b) => acc | (*a ^ *b),
+        final: (acc) => acc,
+    }
+);
+
 impl TpCondSwap for TpBool {
     #[inline(always)]
     fn tp_cond_swap(condition: TpBool, a: &mut TpBool, b: &mut TpBool) {
@@ -1150,6 +1263,30 @@ mod tests {
                             ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
                                 && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
                         }
+
+                        fn leak_lhs(l: Vec<$type>, r: Vec<$type>) -> bool {
+                            let rhs = r.clone()
+                                .into_iter()
+                                .map(|n| $tp_type::protect(n))
+                                .collect::<Vec<_>>();
+                            let lhs_slice: &[_] = &l;
+                            let rhs_slice: &[_] = &rhs;
+
+                            ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                                && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
+                        }
+
+                        fn leak_rhs(l: Vec<$type>, r: Vec<$type>) -> bool {
+                            let lhs = l.clone()
+                                .into_iter()
+                                .map(|n| $tp_type::protect(n))
+                                .collect::<Vec<_>>();
+                            let lhs_slice: &[_] = &lhs;
+                            let rhs_slice: &[_] = &r;
+
+                            ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                                && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
+                        }
                     }
                 }
 
@@ -1311,6 +1448,52 @@ mod tests {
                     (swap1.expose() == b) && (swap2.expose() == a)
                 } else {
                     (swap1.expose() == a) && (swap2.expose() == b)
+                }
+            }
+        }
+
+        mod slice_tp_eq {
+            use super::*;
+
+            quickcheck! {
+                fn no_leak(l: Vec<bool>, r: Vec<bool>) -> bool {
+                    let lhs = l.clone()
+                        .into_iter()
+                        .map(|n| TpBool::protect(n))
+                        .collect::<Vec<_>>();
+                    let rhs = r.clone()
+                        .into_iter()
+                        .map(|n| TpBool::protect(n))
+                        .collect::<Vec<_>>();
+                    let lhs_slice: &[_] = &lhs;
+                    let rhs_slice: &[_] = &rhs;
+
+                    ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                        && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
+                }
+
+                fn leak_lhs(l: Vec<bool>, r: Vec<bool>) -> bool {
+                    let rhs = r.clone()
+                        .into_iter()
+                        .map(|n| TpBool::protect(n))
+                        .collect::<Vec<_>>();
+                    let lhs_slice: &[_] = &l;
+                    let rhs_slice: &[_] = &rhs;
+
+                    ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                        && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
+                }
+
+                fn leak_rhs(l: Vec<bool>, r: Vec<bool>) -> bool {
+                    let lhs = l.clone()
+                        .into_iter()
+                        .map(|n| TpBool::protect(n))
+                        .collect::<Vec<_>>();
+                    let lhs_slice: &[_] = &lhs;
+                    let rhs_slice: &[_] = &r;
+
+                    ((l == r) == (lhs_slice.tp_eq(&rhs_slice).expose()))
+                        && ((l != r) == (lhs_slice.tp_not_eq(&rhs_slice).expose()))
                 }
             }
         }
