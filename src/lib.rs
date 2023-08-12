@@ -30,22 +30,22 @@ pub mod barriers;
 
 use std::ops::Add;
 use std::ops::AddAssign;
-use std::ops::Sub;
-use std::ops::SubAssign;
-use std::ops::Mul;
-use std::ops::MulAssign;
 use std::ops::BitAnd;
 use std::ops::BitAndAssign;
 use std::ops::BitOr;
 use std::ops::BitOrAssign;
 use std::ops::BitXor;
 use std::ops::BitXorAssign;
+use std::ops::Mul;
+use std::ops::MulAssign;
+use std::ops::Neg;
+use std::ops::Not;
 use std::ops::Shl;
 use std::ops::ShlAssign;
 use std::ops::Shr;
 use std::ops::ShrAssign;
-use std::ops::Neg;
-use std::ops::Not;
+use std::ops::Sub;
+use std::ops::SubAssign;
 
 use crate::barriers::optimization_barrier_u8;
 
@@ -62,7 +62,7 @@ macro_rules! impl_unary_op {
                 $output_type((self.0).$op_name())
             }
         }
-    }
+    };
 }
 
 macro_rules! impl_bin_op {
@@ -140,7 +140,7 @@ macro_rules! derive_assign_op {
                 *self = self.$op_name(rhs);
             }
         }
-    }
+    };
 }
 
 macro_rules! impl_as {
@@ -151,18 +151,34 @@ macro_rules! impl_as {
         pub fn $fn_name(self) -> $tp_type {
             $tp_type(self.0 as $type)
         }
-    }
+    };
 }
 
 macro_rules! as_unsigned_type {
-    (u8 ) => {u8 };
-    (u16) => {u16};
-    (u32) => {u32};
-    (u64) => {u64};
-    (i8 ) => {u8 };
-    (i16) => {u16};
-    (i32) => {u32};
-    (i64) => {u64};
+    (u8) => {
+        u8
+    };
+    (u16) => {
+        u16
+    };
+    (u32) => {
+        u32
+    };
+    (u64) => {
+        u64
+    };
+    (i8) => {
+        u8
+    };
+    (i16) => {
+        u16
+    };
+    (i32) => {
+        u32
+    };
+    (i64) => {
+        u64
+    };
 }
 
 macro_rules! impl_tp_eq {
@@ -184,7 +200,7 @@ macro_rules! impl_tp_eq {
                 !self.tp_eq(other)
             }
         }
-    }
+    };
 }
 
 macro_rules! impl_tp_eq_for_number {
@@ -241,7 +257,7 @@ macro_rules! impl_tp_ord {
                 !self.tp_lt(other)
             }
         }
-    }
+    };
 }
 
 macro_rules! impl_tp_cond_swap_with_xor {
@@ -262,7 +278,7 @@ macro_rules! impl_tp_cond_swap_with_xor {
                 *b ^= swapper;
             }
         }
-    }
+    };
 }
 
 macro_rules! define_number_type {
@@ -467,7 +483,10 @@ macro_rules! define_number_type {
 ///
 /// Ideally, this trait will be removed in the future if/when Rust allows overloading of the `==`
 /// and `!=` operators.
-pub trait TpEq<Rhs=Self> where Rhs: ?Sized {
+pub trait TpEq<Rhs = Self>
+where
+    Rhs: ?Sized,
+{
     /// Compare `self` with `other` for equality without leaking the result.
     /// **Important**: if either input is not a timing-protected type, this operation might leak the
     /// value of that type. To prevent timing leaks, protect values before performing any operations
@@ -493,7 +512,10 @@ pub trait TpEq<Rhs=Self> where Rhs: ?Sized {
 ///
 /// Ideally, this trait will be removed in the future if/when Rust allows overloading of the `<`,
 /// `>`, `<=`, and `>=` operators.
-pub trait TpOrd<Rhs=Self> where Rhs: ?Sized {
+pub trait TpOrd<Rhs = Self>
+where
+    Rhs: ?Sized,
+{
     /// Compute `self < other` without leaking the result.
     /// **Important**: if either input is not a timing-protected type, this operation might leak the
     /// value of that type. To prevent timing leaks, protect values before performing any operations
@@ -550,14 +572,18 @@ pub trait TpCondSwap {
     fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self);
 }
 
-impl<T> TpEq for [T] where T: TpEq {
+impl<T> TpEq for [T]
+where
+    T: TpEq,
+{
     #[inline(always)]
     default fn tp_eq(&self, other: &[T]) -> TpBool {
         if self.len() != other.len() {
             return TP_FALSE;
         }
 
-        self.iter().zip(other.iter())
+        self.iter()
+            .zip(other.iter())
             .fold(TP_TRUE, |prev, (a, b)| prev & a.tp_eq(b))
     }
 
@@ -567,12 +593,16 @@ impl<T> TpEq for [T] where T: TpEq {
             return TP_FALSE;
         }
 
-        self.iter().zip(other.iter())
+        self.iter()
+            .zip(other.iter())
             .fold(TP_FALSE, |prev, (a, b)| prev | a.tp_not_eq(b))
     }
 }
 
-impl<T> TpEq for Vec<T> where T: TpEq {
+impl<T> TpEq for Vec<T>
+where
+    T: TpEq,
+{
     #[inline(always)]
     fn tp_eq(&self, other: &Vec<T>) -> TpBool {
         self[..].tp_eq(&other[..])
@@ -584,7 +614,10 @@ impl<T> TpEq for Vec<T> where T: TpEq {
     }
 }
 
-impl<T> TpCondSwap for [T] where T: TpCondSwap {
+impl<T> TpCondSwap for [T]
+where
+    T: TpCondSwap,
+{
     #[inline(always)]
     fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self) {
         if a.len() != b.len() {
@@ -597,7 +630,10 @@ impl<T> TpCondSwap for [T] where T: TpCondSwap {
     }
 }
 
-impl<T> TpCondSwap for Vec<T> where T: TpCondSwap {
+impl<T> TpCondSwap for Vec<T>
+where
+    T: TpCondSwap,
+{
     #[inline(always)]
     fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self) {
         condition.cond_swap(a.as_mut_slice(), b.as_mut_slice());
@@ -712,7 +748,6 @@ define_number_type!(TpI64, i64, tp_lt(lhs, rhs) => {
 });
 impl_unary_op!(Neg, neg, TpI64, TpI64);
 
-
 /// A boolean type that prevents its value from being leaked to attackers through timing
 /// information.
 ///
@@ -779,11 +814,11 @@ impl TpBool {
         TpBool(input_u8)
     }
 
-    impl_as!(TpU8 , u8 , as_u8 );
+    impl_as!(TpU8, u8, as_u8);
     impl_as!(TpU16, u16, as_u16);
     impl_as!(TpU32, u32, as_u32);
     impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8 , i8 , as_i8 );
+    impl_as!(TpI8, i8, as_i8);
     impl_as!(TpI16, i16, as_i16);
     impl_as!(TpI32, i32, as_i32);
     impl_as!(TpI64, i64, as_i64);
@@ -808,7 +843,10 @@ impl TpBool {
     /// effect. This operation is implemented without branching on the boolean value, and it will
     /// not leak information about whether the values were swapped.
     #[inline(always)]
-    pub fn cond_swap<T>(self, a: &mut T, b: &mut T) where T: TpCondSwap + ?Sized {
+    pub fn cond_swap<T>(self, a: &mut T, b: &mut T)
+    where
+        T: TpCondSwap + ?Sized,
+    {
         T::tp_cond_swap(self, a, b);
     }
 
@@ -816,7 +854,10 @@ impl TpBool {
     /// The return value is selected without branching on the boolean value, and no information
     /// about which value was selected will be leaked.
     #[inline(always)]
-    pub fn select<T>(self, when_true: T, when_false: T) -> T where T: TpCondSwap {
+    pub fn select<T>(self, when_true: T, when_false: T) -> T
+    where
+        T: TpCondSwap,
+    {
         // TODO is this optimal?
         // seems to compile to use NEG instead of DEC
         // NEG clobbers the carry flag, so arguably DEC could be better
@@ -905,7 +946,7 @@ mod tests {
                         && ((lhs != rhs) == (lhs_tp.tp_not_eq(&rhs_tp).expose()))
                 }
             }
-        }
+        };
     }
 
     macro_rules! test_tp_ord {
@@ -966,7 +1007,7 @@ mod tests {
                     }
                 }
             }
-        }
+        };
     }
     macro_rules! test_number_type {
         ($tp_type:ident, $type:ident, $test_mod:ident) => {
@@ -1152,11 +1193,11 @@ mod tests {
         }
     }
 
-    test_number_type!(TpU8 , u8 , u8_tests );
+    test_number_type!(TpU8, u8, u8_tests);
     test_number_type!(TpU16, u16, u16_tests);
     test_number_type!(TpU32, u32, u32_tests);
     test_number_type!(TpU64, u64, u64_tests);
-    test_number_type!(TpI8 , i8 , i8_tests );
+    test_number_type!(TpI8, i8, i8_tests);
     test_number_type!(TpI16, i16, i16_tests);
     test_number_type!(TpI32, i32, i32_tests);
     test_number_type!(TpI64, i64, i64_tests);

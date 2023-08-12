@@ -46,7 +46,7 @@
 ///
 /// The current implementation of rust-timing-shield assumes that this is ridiculous and wouldn't
 /// happen. In particular, an assumption is made that the compiler will only insert a `select` for
-/// "values of boolean origin".  For example, this branchless code: 
+/// "values of boolean origin".  For example, this branchless code:
 ///
 /// ```
 /// fn add_bool(number: u8, b: bool) -> u8 {
