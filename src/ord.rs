@@ -125,3 +125,109 @@ impl_tp_ord_for_number!(TpI64, i64, tp_lt: (lhs, rhs) => {
     let overflowing_iff_lt = ((lhs as i128).wrapping_sub(rhs as i128)) as u128;
     unsafe { TpBool::from_u8_unchecked((overflowing_iff_lt >> 127) as u8) }
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck::quickcheck;
+
+    macro_rules! test_tp_ord {
+        (
+            $test_name:ident,
+            $type:ident,
+            ($lhs_var:ident) => $lhs_expr:expr,
+            ($rhs_var:ident) => $rhs_expr:expr
+        ) => {
+            mod $test_name {
+                use super::*;
+
+                quickcheck! {
+                    fn tp_lt(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+                        (lhs < rhs) == (lhs_tp.tp_lt(&rhs_tp).expose())
+                    }
+
+                    fn tp_gt(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+                        (lhs > rhs) == (lhs_tp.tp_gt(&rhs_tp).expose())
+                    }
+
+                    fn tp_lt_eq(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+                        (lhs <= rhs) == (lhs_tp.tp_lt_eq(&rhs_tp).expose())
+                    }
+
+                    fn tp_gt_eq(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+                        (lhs >= rhs) == (lhs_tp.tp_gt_eq(&rhs_tp).expose())
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! test_all_tp_ord {
+        (
+            $test_suite_name:ident,
+            $tp_type:ident,
+            $type:ident
+        ) => {
+            mod $test_suite_name {
+                use super::*;
+
+                test_tp_ord!(
+                    no_leak, $type,
+                    (l) => $tp_type::protect(l),
+                    (r) => $tp_type::protect(r)
+                );
+                test_tp_ord!(
+                    leak_lhs, $type,
+                    (l) => l,
+                    (r) => $tp_type::protect(r)
+                );
+                test_tp_ord!(
+                    leak_rhs, $type,
+                    (l) => $tp_type::protect(l),
+                    (r) => r
+                );
+            }
+        }
+    }
+
+    test_all_tp_ord!(u8, TpU8, u8);
+    test_all_tp_ord!(u16, TpU16, u16);
+    test_all_tp_ord!(u32, TpU32, u32);
+    test_all_tp_ord!(u64, TpU64, u64);
+    test_all_tp_ord!(i8, TpI8, i8);
+    test_all_tp_ord!(i16, TpI16, i16);
+    test_all_tp_ord!(i32, TpI32, i32);
+    test_all_tp_ord!(i64, TpI64, i64);
+}

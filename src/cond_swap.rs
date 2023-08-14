@@ -42,6 +42,8 @@ pub trait TpCondSwap {
     where
         Self: Sized,
     {
+        // TODO a better way to select on slices
+
         let mut result = when_false;
         let mut replace_with = when_true;
         Self::tp_cond_swap(condition, &mut result, &mut replace_with);
@@ -113,3 +115,133 @@ impl_tp_cond_swap_for_number!(TpI8, i8);
 impl_tp_cond_swap_for_number!(TpI16, i16);
 impl_tp_cond_swap_for_number!(TpI32, i32);
 impl_tp_cond_swap_for_number!(TpI64, i64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck::quickcheck;
+
+    macro_rules! test_tp_cond_swap {
+        ($test_name:ident, $tp_type:ident, $type:ident) => {
+            mod $test_name {
+                use super::*;
+
+                fn protect_vec(v: &Vec<$type>) -> Vec<$tp_type> {
+                    v.iter().map(|&elem| $tp_type::protect(elem)).collect()
+                }
+
+                fn expose_vec(v: &Vec<$tp_type>) -> Vec<$type> {
+                    v.iter().map(|&elem| elem.expose()).collect()
+                }
+
+                quickcheck! {
+                    fn swap(condition: bool, a: $type, b: $type) -> bool {
+                        let mut a_tp = $tp_type::protect(a);
+                        let mut b_tp = $tp_type::protect(b);
+
+                        TpBool::protect(condition).cond_swap(&mut a_tp, &mut b_tp);
+
+                        if condition {
+                            (a_tp.expose() == b) && (b_tp.expose() == a)
+                        } else {
+                            (a_tp.expose() == a) && (b_tp.expose() == b)
+                        }
+                    }
+
+                    fn swap_slices(condition: bool, a: Vec<$type>, b: Vec<$type>) -> quickcheck::TestResult {
+                        let mut a_tp = protect_vec(&a);
+                        let mut b_tp = protect_vec(&b);
+
+                        if a.len() != b.len() {
+                            return quickcheck::TestResult::must_fail(move || {
+                                TpBool::protect(condition).cond_swap(a_tp.as_mut_slice(), b_tp.as_mut_slice());
+                            });
+                        }
+
+                        TpBool::protect(condition).cond_swap(a_tp.as_mut_slice(), b_tp.as_mut_slice());
+
+                        let a_after = expose_vec(&a_tp);
+                        let b_after = expose_vec(&b_tp);
+
+                        quickcheck::TestResult::from_bool(
+                            if condition {
+                                (a_after == b) && (b_after == a)
+                            } else {
+                                (a_after == a) && (b_after == b)
+                            }
+                        )
+                    }
+
+                    fn swap_vecs(condition: bool, a: Vec<$type>, b: Vec<$type>) -> quickcheck::TestResult {
+                        let mut a_tp = protect_vec(&a);
+                        let mut b_tp = protect_vec(&b);
+
+                        if a.len() != b.len() {
+                            return quickcheck::TestResult::must_fail(move || {
+                                TpBool::protect(condition).cond_swap(&mut a_tp, &mut b_tp);
+                            });
+                        }
+
+                        TpBool::protect(condition).cond_swap(&mut a_tp, &mut b_tp);
+
+                        let a_after = expose_vec(&a_tp);
+                        let b_after = expose_vec(&b_tp);
+
+                        quickcheck::TestResult::from_bool(
+                            if condition {
+                                (a_after == b) && (b_after == a)
+                            } else {
+                                (a_after == a) && (b_after == b)
+                            }
+                        )
+                    }
+
+                    fn select(condition: bool, a: $type, b: $type) -> bool {
+                        let a_tp = $tp_type::protect(a);
+                        let b_tp = $tp_type::protect(b);
+
+                        let selected = TpBool::protect(condition).select(a_tp, b_tp).expose();
+
+                        if condition {
+                            selected == a
+                        } else {
+                            selected == b
+                        }
+                    }
+
+                    fn select_vec(condition: bool, a: Vec<$type>, b: Vec<$type>) -> quickcheck::TestResult {
+                        let a_tp = protect_vec(&a);
+                        let b_tp = protect_vec(&b);
+
+                        if a.len() != b.len() {
+                            return quickcheck::TestResult::must_fail(move || {
+                                TpBool::protect(condition).select(a_tp, b_tp);
+                            });
+                        }
+
+                        let selected_tp = TpBool::protect(condition).select(a_tp, b_tp);
+                        let selected = expose_vec(&selected_tp);
+
+                        quickcheck::TestResult::from_bool(
+                            if condition {
+                                selected == a
+                            } else {
+                                selected == b
+                            }
+                        )
+                    }
+                }
+            }
+        };
+    }
+
+    test_tp_cond_swap!(bool, TpBool, bool);
+    test_tp_cond_swap!(u8, TpU8, u8);
+    test_tp_cond_swap!(u16, TpU16, u16);
+    test_tp_cond_swap!(u32, TpU32, u32);
+    test_tp_cond_swap!(u64, TpU64, u64);
+    test_tp_cond_swap!(i8, TpI8, i8);
+    test_tp_cond_swap!(i16, TpI16, i16);
+    test_tp_cond_swap!(i32, TpI32, i32);
+    test_tp_cond_swap!(i64, TpI64, i64);
+}

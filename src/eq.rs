@@ -276,3 +276,102 @@ impl_all_tp_eq_for_number!(i8, TpI8);
 impl_all_tp_eq_for_number!(i16, TpI16);
 impl_all_tp_eq_for_number!(i32, TpI32);
 impl_all_tp_eq_for_number!(i64, TpI64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck::quickcheck;
+
+    macro_rules! test_tp_eq {
+        (
+            $test_name:ident,
+            $type:ident,
+            ($lhs_var:ident) => $lhs_expr:expr,
+            ($rhs_var:ident) => $rhs_expr:expr
+        ) => {
+            mod $test_name {
+                use super::*;
+
+                quickcheck! {
+                    fn tp_eq(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+
+                        (lhs == rhs) == (lhs_tp.tp_eq(&rhs_tp).expose())
+                    }
+
+                    fn tp_not_eq(lhs: $type, rhs: $type) -> bool {
+                        let lhs_tp = {
+                            let $lhs_var = lhs;
+                            $lhs_expr
+                        };
+                        let rhs_tp = {
+                            let $rhs_var = rhs;
+                            $rhs_expr
+                        };
+
+                        (lhs != rhs) == (lhs_tp.tp_not_eq(&rhs_tp).expose())
+                    }
+
+                    fn slice_eq(lhs: Vec<$type>, rhs: Vec<$type>) -> bool {
+                        let lhs_tp: Vec<_> = lhs.iter().map(|&$lhs_var| $lhs_expr).collect();
+                        let rhs_tp: Vec<_> = rhs.iter().map(|&$rhs_var| $rhs_expr).collect();
+
+                        (lhs == rhs) == (lhs_tp.as_slice().tp_eq(rhs_tp.as_slice()).expose())
+                    }
+
+                    fn slice_not_eq(lhs: Vec<$type>, rhs: Vec<$type>) -> bool {
+                        let lhs_tp: Vec<_> = lhs.iter().map(|&$lhs_var| $lhs_expr).collect();
+                        let rhs_tp: Vec<_> = rhs.iter().map(|&$rhs_var| $rhs_expr).collect();
+
+                        (lhs != rhs) == (lhs_tp.as_slice().tp_not_eq(rhs_tp.as_slice()).expose())
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! test_all_tp_eq {
+        (
+            $test_suite_name:ident,
+            $tp_type:ident,
+            $type:ident
+        ) => {
+            mod $test_suite_name {
+                use super::*;
+
+                test_tp_eq!(
+                    no_leak, $type,
+                    (l) => $tp_type::protect(l),
+                    (r) => $tp_type::protect(r)
+                );
+                test_tp_eq!(
+                    leak_lhs, $type,
+                    (l) => l,
+                    (r) => $tp_type::protect(r)
+                );
+                test_tp_eq!(
+                    leak_rhs, $type,
+                    (l) => $tp_type::protect(l),
+                    (r) => r
+                );
+            }
+        }
+    }
+
+    test_all_tp_eq!(bool, TpBool, bool);
+    test_all_tp_eq!(u8, TpU8, u8);
+    test_all_tp_eq!(u16, TpU16, u16);
+    test_all_tp_eq!(u32, TpU32, u32);
+    test_all_tp_eq!(u64, TpU64, u64);
+    test_all_tp_eq!(i8, TpI8, i8);
+    test_all_tp_eq!(i16, TpI16, i16);
+    test_all_tp_eq!(i32, TpI32, i32);
+    test_all_tp_eq!(i64, TpI64, i64);
+}

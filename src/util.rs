@@ -32,7 +32,7 @@ macro_rules! impl_as {
         /// keyword.
         #[inline(always)]
         pub fn $fn_name(self) -> $tp_type {
-            $tp_type(self.0 as $type)
+            $tp_type::protect(self.0 as $type)
         }
     };
 }

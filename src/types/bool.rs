@@ -133,3 +133,18 @@ impl TpBool {
         TpCondSwap::select(self, when_true, when_false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_values() {
+        assert_eq!(TP_FALSE.0, 0);
+        assert_eq!(TP_TRUE.0, 1);
+        assert_eq!(TpBool::protect(false).0, 0);
+        assert_eq!(TpBool::protect(true).0, 1);
+        assert_eq!(TP_FALSE.expose(), false);
+        assert_eq!(TP_TRUE.expose(), true);
+    }
+}

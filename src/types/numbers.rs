@@ -1,4 +1,4 @@
-use crate::{barriers::optimization_barrier_u8, util::impl_as, TpCondSwap};
+use crate::util::impl_as;
 
 macro_rules! define_number_type {
     (
