@@ -154,6 +154,7 @@
 /// For these reasons, optimization barriers are only used where necessary to minimize any
 /// potential impact on performance, keeping rust-timing-shield zero-cost for as many applications
 /// as possible.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn optimization_barrier_u8(mut value: u8) -> u8 {
     unsafe {

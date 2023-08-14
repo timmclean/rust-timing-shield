@@ -25,6 +25,11 @@
 extern crate quickcheck;
 
 pub mod barriers;
+mod cond_swap;
+mod eq;
+mod ord;
+mod types;
+mod util;
 
 use std::ops::Add;
 use std::ops::AddAssign;
@@ -45,62 +50,32 @@ use std::ops::ShrAssign;
 use std::ops::Sub;
 use std::ops::SubAssign;
 
-use crate::barriers::optimization_barrier_u8;
+pub use crate::cond_swap::TpCondSwap;
+pub use crate::eq::TpEq;
+pub use crate::ord::TpOrd;
+pub use crate::types::{bool::*, numbers::*};
 
 macro_rules! impl_unary_op {
     (
         $trait_name:ident, $op_name:ident,
-        $input_type:ident, $output_type:ident
+        $input_type:ident, $output_type:ident,
+        ($input_var:ident) => $input_expr:expr,
+        ($output_var:ident) => $output_expr:expr
     ) => {
         impl $trait_name for $input_type {
             type Output = $output_type;
 
             #[inline(always)]
             fn $op_name(self) -> $output_type {
-                $output_type((self.0).$op_name())
+                let $input_var = self;
+                let $output_var = ($input_expr).$op_name();
+                $output_expr
             }
         }
     };
 }
 
 macro_rules! impl_bin_op {
-    (
-        $trait_name:ident, $op_name:ident, $output_type:ident,
-        ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
-        ($rhs_var:ident : $rhs_type:ty) => $rhs_expr:expr
-    ) => {
-        impl_bin_op!(
-            $trait_name, $op_name, $op_name, $output_type,
-            ($lhs_var: $lhs_type) => $lhs_expr,
-            ($rhs_var: $rhs_type) => $rhs_expr,
-            (output) => output
-        );
-    };
-    (
-        $trait_name:ident, $op_name:ident, $output_type:ident,
-        ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
-        ($rhs_var:ident : $rhs_type:ty) => $rhs_expr:expr,
-        ($output_var:ident) => $output_expr:expr
-    ) => {
-        impl_bin_op!(
-            $trait_name, $op_name, $op_name, $output_type,
-            ($lhs_var: $lhs_type) => $lhs_expr,
-            ($rhs_var: $rhs_type) => $rhs_expr,
-            ($output_var) => $output_expr
-        );
-    };
-    (
-        $trait_name:ident, $outer_op_name:ident, $inner_op_name:ident, $output_type:ident,
-        ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
-        ($rhs_var:ident : $rhs_type:ty) => $rhs_expr:expr
-    ) => {
-        impl_bin_op!(
-            $trait_name, $outer_op_name, $inner_op_name, $output_type,
-            ($lhs_var: $lhs_type) => $lhs_expr,
-            ($rhs_var: $rhs_type) => $rhs_expr,
-            (output) => output
-        );
-    };
     (
         $trait_name:ident, $outer_op_name:ident, $inner_op_name:ident, $output_type:ident,
         ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
@@ -121,10 +96,10 @@ macro_rules! impl_bin_op {
                     $rhs_expr
                 };
                 let $output_var = lhs.$inner_op_name(rhs);
-                $output_type($output_expr)
+                $output_expr
             }
         }
-    }
+    };
 }
 
 macro_rules! derive_assign_op {
@@ -141,312 +116,73 @@ macro_rules! derive_assign_op {
     };
 }
 
-macro_rules! impl_as {
-    ($tp_type:ident, $type:ident, $fn_name:ident) => {
-        /// Casts from one number type to another, following the same conventions as Rust's `as`
-        /// keyword.
-        #[inline(always)]
-        pub fn $fn_name(self) -> $tp_type {
-            $tp_type(self.0 as $type)
-        }
-    };
-}
-
-macro_rules! as_unsigned_type {
-    (u8) => {
-        u8
-    };
-    (u16) => {
-        u16
-    };
-    (u32) => {
-        u32
-    };
-    (u64) => {
-        u64
-    };
-    (i8) => {
-        u8
-    };
-    (i16) => {
-        u16
-    };
-    (i32) => {
-        u32
-    };
-    (i64) => {
-        u64
-    };
-}
-
-macro_rules! impl_tp_eq {
+macro_rules! impl_unary_op_for_number {
     (
-        $lhs_type:ty, $rhs_type:ty,
-        ($lhs_var:ident, $rhs_var:ident) => $eq_expr:expr
+        $trait_name:ident, $op_name:ident,
+        $input_type:ident, $output_type:ident
     ) => {
-        impl TpEq<$rhs_type> for $lhs_type {
-            #[inline(always)]
-            fn tp_eq(&self, other: &$rhs_type) -> TpBool {
-                let $lhs_var = self;
-                let $rhs_var = other;
-                $eq_expr
-            }
-
-            #[inline(always)]
-            fn tp_not_eq(&self, other: &$rhs_type) -> TpBool {
-                // TODO might not be optimal
-                !self.tp_eq(other)
-            }
-        }
-    };
-}
-
-macro_rules! impl_tp_eq_for_number {
-    (
-        $inner_type:ident,
-        ($lhs_var:ident : $lhs_type:ty) => $lhs_expr:expr,
-        ($rhs_var:ident : $rhs_type:ty) => $rhs_expr:expr
-    ) => {
-        impl_tp_eq!($lhs_type, $rhs_type, (lhs, rhs) => {
-            let l = {
-                let $lhs_var = lhs;
-                $lhs_expr
-            };
-            let r = {
-                let $rhs_var = rhs;
-                $rhs_expr
-            };
-            let bit_diff = l ^ r;
-            let msb_iff_zero_diff = bit_diff.wrapping_sub(1) & !bit_diff;
-            let type_bitwidth = $inner_type::count_zeros(0);
-            let unsigned_msb_iff_zero_diff = msb_iff_zero_diff as as_unsigned_type!($inner_type);
-            TpBool((unsigned_msb_iff_zero_diff >> (type_bitwidth - 1)) as u8)
-        });
+        impl_unary_op!(
+            $trait_name, $op_name, $input_type, $output_type,
+            (input) => input.expose(),
+            (output) => $output_type::protect(output)
+        );
     }
 }
 
-macro_rules! impl_slice_tp_eq {
-    (
-        $lhs_type:ty,
-        $rhs_type:ty,
-        fold_eq {
-            initial: $eq_initial:expr,
-            fold: ($eq_fold_acc:ident, $eq_fold_elem_left:ident, $eq_fold_elem_right:ident) => $eq_fold_expr:expr,
-            final: ($eq_acc:ident) => $eq_final_expr:expr,
-        }
-        fold_not_eq {
-            initial: $not_eq_initial:expr,
-            fold: ($not_eq_fold_acc:ident, $not_eq_fold_elem_left:ident, $not_eq_fold_elem_right:ident) => $not_eq_fold_expr:expr,
-            final: ($not_eq_acc:ident) => $not_eq_final_expr:expr,
-        }
-    ) => {
-        impl SliceTpEq<$rhs_type> for $lhs_type {
-            fn slice_eq(a: &[Self], b: &[$rhs_type]) -> TpBool {
-                if a.len() != b.len() {
-                    return TP_FALSE;
-                }
-
-                let $eq_acc = a.iter().zip(b.iter()).fold(
-                    $eq_initial,
-                    |$eq_fold_acc, ($eq_fold_elem_left, $eq_fold_elem_right)| $eq_fold_expr,
-                );
-                $eq_final_expr
-            }
-
-            fn slice_not_eq(a: &[Self], b: &[$rhs_type]) -> TpBool {
-                if a.len() != b.len() {
-                    return TP_TRUE;
-                }
-
-                let $not_eq_acc = a.iter().zip(b.iter()).fold(
-                    $not_eq_initial,
-                    |$not_eq_fold_acc, ($not_eq_fold_elem_left, $not_eq_fold_elem_right)| {
-                        $not_eq_fold_expr
-                    },
-                );
-                $not_eq_final_expr
-            }
-        }
-    };
-}
-
-macro_rules! impl_tp_ord {
-    (
-        $lhs_type:ty, $rhs_type:ty,
-        tp_lt($lhs_var:ident, $rhs_var:ident) => $lt_expr:expr
-    ) => {
-        impl TpOrd<$rhs_type> for $lhs_type {
-            #[inline(always)]
-            fn tp_lt(&self, other: &$rhs_type) -> TpBool {
-                let $lhs_var = self;
-                let $rhs_var = other;
-                $lt_expr
-            }
-
-            #[inline(always)]
-            fn tp_gt(&self, other: &$rhs_type) -> TpBool {
-                other.tp_lt(self)
-            }
-
-            #[inline(always)]
-            fn tp_lt_eq(&self, other: &$rhs_type) -> TpBool {
-                // TODO might not be optimal
-                !self.tp_gt(other)
-            }
-
-            #[inline(always)]
-            fn tp_gt_eq(&self, other: &$rhs_type) -> TpBool {
-                // TODO might not be optimal
-                !self.tp_lt(other)
-            }
-        }
-    };
-}
-
-macro_rules! impl_tp_cond_swap_with_xor {
-    ($tp_type:ident, $type:ident) => {
-        impl TpCondSwap for $tp_type {
-            #[inline(always)]
-            fn tp_cond_swap(condition: TpBool, a: &mut $tp_type, b: &mut $tp_type) {
-                // Zero-extend condition to this type's width
-                let cond_zx = $tp_type(condition.0 as $type);
-
-                // Create mask of 11...11 for true or 00...00 for false
-                let mask = !(cond_zx - 1);
-
-                // swapper will be a XOR b for true or 00...00 for false
-                let swapper = (*a ^ *b) & mask;
-
-                *a ^= swapper;
-                *b ^= swapper;
-            }
-        }
-    };
-}
-
-macro_rules! define_number_type {
+macro_rules! impl_all_bin_op_for_number {
     (
         $tp_type:ident, $type:ident,
-        tp_lt($tp_lt_lhs_var:ident, $tp_lt_rhs_var:ident) => $tp_lt_expr:expr,
-        methods {
-            $($methods:tt)*
-        }
+        $trait_name:ident, $outer_op_name:ident, $inner_op_name:ident
     ) => {
-        /// A number type that prevents its value from being leaked to attackers through timing
-        /// information.
-        ///
-        /// Use this type's `protect` method as early as possible to prevent the value from being
-        /// used in variable-time computations.
-        ///
-        /// Unlike Rust's built-in number types, `rust-timing-shield` number types have no overflow
-        /// checking, even in debug mode. In other words, they behave like Rust's
-        /// [Wrapping](https://doc.rust-lang.org/std/num/struct.Wrapping.html) types.
-        ///
-        /// Additionally, all shift distances are reduced mod the bit width of the type
-        /// (e.g. `some_i64 << 104` is equivalent to `some_i64 << 40`).
-        ///
-        /// ```
-        /// # use timing_shield::*;
-        /// # let some_u8 = 5u8;
-        /// # let some_other_u8 = 20u8;
-        /// // Protect the value as early as possible to limit the risk
-        /// let protected_value = TpU8::protect(some_u8);
-        /// let other_protected_value = TpU8::protect(some_other_u8);
-        ///
-        /// // Do some computation with the protected values
-        /// let x = (other_protected_value + protected_value) & 0x40;
-        ///
-        /// // If needed, remove protection using `expose`
-        /// println!("{}", x.expose());
-        /// ```
-        #[derive(Clone, Copy)]
-        pub struct $tp_type($type);
+        impl_bin_op!(
+            $trait_name, $outer_op_name, $inner_op_name, $tp_type,
+            (l: $tp_type) => l.expose(),
+            (r: $tp_type) => r.expose(),
+            (output) => $tp_type::protect(output)
+        );
+        impl_bin_op!(
+            $trait_name, $outer_op_name, $inner_op_name, $tp_type,
+            (l: $type) => l,
+            (r: $tp_type) => r.expose(),
+            (output) => $tp_type::protect(output)
+        );
+        impl_bin_op!(
+            $trait_name, $outer_op_name, $inner_op_name, $tp_type,
+            (l: $tp_type) => l.expose(),
+            (r: $type) => r,
+            (output) => $tp_type::protect(output)
+        );
+    }
+}
 
-        impl $tp_type {
-            /// Hide `input` behind a protective abstraction to prevent the value from being used
-            /// in such a way that the value could leak out via a timing side channel.
-            ///
-            /// ```
-            /// # use timing_shield::*;
-            /// # let secret_u32 = 5u32;
-            /// let protected = TpU32::protect(secret_u32);
-            ///
-            /// // Use `protected` instead of `secret_u32` to avoid timing leaks
-            /// ```
-            #[inline(always)]
-            pub fn protect(input: $type) -> Self {
-                $tp_type(input)
-            }
+macro_rules! impl_all_ops_for_number {
+    ($tp_type:ident, $type:ident) => {
+        impl_unary_op!(
+            Not, not, $tp_type, $tp_type,
+            (input) => input.expose(),
+            (output) => $tp_type::protect(output)
+        );
 
-            $($methods)*
+        impl_all_bin_op_for_number!($tp_type, $type, Add, add, wrapping_add);
+        impl_all_bin_op_for_number!($tp_type, $type, Sub, sub, wrapping_sub);
+        impl_all_bin_op_for_number!($tp_type, $type, Mul, mul, wrapping_mul);
+        impl_all_bin_op_for_number!($tp_type, $type, BitAnd, bitand, bitand);
+        impl_all_bin_op_for_number!($tp_type, $type, BitOr, bitor, bitor);
+        impl_all_bin_op_for_number!($tp_type, $type, BitXor, bitxor, bitxor);
 
-            /// Shifts left by `n` bits, wrapping truncated bits around to the right side of the
-            /// resulting value.
-            ///
-            /// If `n` is larger than the bitwidth of this number type,
-            /// `n` is reduced mod that bitwidth.
-            /// For example, rotating an `i16` with `n = 35` is equivalent to rotating with `n =
-            /// 3`, since `35 = 3  mod 16`.
-            #[inline(always)]
-            pub fn rotate_left(self, n: u32) -> Self {
-                $tp_type(self.0.rotate_left(n))
-            }
+        impl_bin_op!(
+            Shl, shl, wrapping_shl, $tp_type,
+            (l: $tp_type) => l.expose(),
+            (r: u32) => r,
+            (output) => $tp_type::protect(output)
+        );
 
-            /// Shifts right by `n` bits, wrapping truncated bits around to the left side of the
-            /// resulting value.
-            ///
-            /// If `n` is larger than the bitwidth of this number type,
-            /// `n` is reduced mod that bitwidth.
-            /// For example, rotating an `i16` with `n = 35` is equivalent to rotating with `n =
-            /// 3`, since `35 = 3  mod 16`.
-            #[inline(always)]
-            pub fn rotate_right(self, n: u32) -> Self {
-                $tp_type(self.0.rotate_right(n))
-            }
-
-            /// Remove the timing protection and expose the raw number value.
-            /// Once a value is exposed, it is the library user's responsibility to prevent timing
-            /// leaks (if necessary).
-            ///
-            /// Commonly, this method is used when a value is safe to make public (e.g. when an
-            /// encryption algorithm outputs a ciphertext). Alternatively, this method may need to
-            /// be used when providing a secret value to an interface that does not use
-            /// `timing-shield`'s types (e.g. writing a secret key to a file using a file system
-            /// API).
-            #[inline(always)]
-            pub fn expose(self) -> $type {
-                self.0
-            }
-        }
-
-        impl_unary_op!(Not, not, $tp_type, $tp_type);
-
-        impl_bin_op!(Add, add, wrapping_add, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(Add, add, wrapping_add, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(Add, add, wrapping_add, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(Sub, sub, wrapping_sub, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(Sub, sub, wrapping_sub, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(Sub, sub, wrapping_sub, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(Mul, mul, wrapping_mul, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(Mul, mul, wrapping_mul, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(Mul, mul, wrapping_mul, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(BitAnd, bitand, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(BitAnd, bitand, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(BitAnd, bitand, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(BitOr, bitor, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(BitOr, bitor, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(BitOr, bitor, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(BitXor, bitxor, $tp_type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_bin_op!(BitXor, bitxor, $tp_type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_bin_op!(BitXor, bitxor, $tp_type, (l: $tp_type) => l.0, (r: $type   ) => r  );
-
-        impl_bin_op!(Shl, shl, wrapping_shl, $tp_type, (l: $tp_type) => l.0, (r: u32) => r);
-        impl_bin_op!(Shr, shr, wrapping_shr, $tp_type, (l: $tp_type) => l.0, (r: u32) => r);
+        impl_bin_op!(
+            Shr, shr, wrapping_shr, $tp_type,
+            (l: $tp_type) => l.expose(),
+            (r: u32) => r,
+            (output) => $tp_type::protect(output)
+        );
 
         derive_assign_op!(AddAssign, add_assign, add, $tp_type, $tp_type);
         derive_assign_op!(AddAssign, add_assign, add, $tp_type, $type);
@@ -468,473 +204,56 @@ macro_rules! define_number_type {
 
         derive_assign_op!(ShlAssign, shl_assign, shl, $tp_type, u32);
         derive_assign_op!(ShrAssign, shr_assign, shr, $tp_type, u32);
+    }
+}
 
-        impl_tp_eq_for_number!($type, (l: $tp_type) => l.0, (r: $tp_type) => r.0);
-        impl_tp_eq_for_number!($type, (l: $type   ) => l  , (r: $tp_type) => r.0);
-        impl_tp_eq_for_number!($type, (l: $tp_type) => l.0, (r: $type   ) => r  );
+impl_all_ops_for_number!(TpU8, u8);
+impl_all_ops_for_number!(TpU16, u16);
+impl_all_ops_for_number!(TpU32, u32);
+impl_all_ops_for_number!(TpU64, u64);
+impl_all_ops_for_number!(TpI8, i8);
+impl_all_ops_for_number!(TpI16, i16);
+impl_all_ops_for_number!(TpI32, i32);
+impl_all_ops_for_number!(TpI64, i64);
 
-        impl_slice_tp_eq!(
-            $tp_type,
-            $tp_type,
-            fold_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_eq(&0),
-            }
-            fold_not_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_not_eq(&0),
-            }
+impl_unary_op_for_number!(Neg, neg, TpI8, TpI8);
+impl_unary_op_for_number!(Neg, neg, TpI16, TpI16);
+impl_unary_op_for_number!(Neg, neg, TpI32, TpI32);
+impl_unary_op_for_number!(Neg, neg, TpI64, TpI64);
+
+macro_rules! impl_all_bin_op_for_bool {
+    ($trait_name:ident, $op_name:ident) => {
+        impl_all_bin_op_for_bool!($trait_name, $op_name, $op_name);
+    };
+    ($trait_name:ident, $outer_op_name:ident, $inner_op_name:ident) => {
+        impl_bin_op!(
+            $trait_name,
+            $outer_op_name,
+            $inner_op_name,
+            TpBool,
+            (l: TpBool) => l.expose_u8_unprotected(),
+            (r: TpBool) => r.expose_u8_unprotected(),
+            (b) => unsafe { TpBool::from_u8_unchecked(b) }
         );
-        impl_slice_tp_eq!(
-            $type,
-            $tp_type,
-            fold_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_eq(&0),
-            }
-            fold_not_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_not_eq(&0),
-            }
+        impl_bin_op!(
+            $trait_name,
+            $outer_op_name,
+            $inner_op_name,
+            TpBool,
+            (l: bool) => l as u8,
+            (r: TpBool) => r.expose_u8_unprotected(),
+            (b) => unsafe { TpBool::from_u8_unchecked(b) }
         );
-        impl_slice_tp_eq!(
-            $tp_type,
-            $type,
-            fold_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_eq(&0),
-            }
-            fold_not_eq {
-                initial: $tp_type(0),
-                fold: (acc, a, b) => acc | (*a ^ *b),
-                final: (acc) => acc.tp_not_eq(&0),
-            }
+        impl_bin_op!(
+            $trait_name,
+            $outer_op_name,
+            $inner_op_name,
+            TpBool,
+            (l: TpBool) => l.expose_u8_unprotected(),
+            (r: bool) => r as u8,
+            (b) => unsafe { TpBool::from_u8_unchecked(b) }
         );
-
-        impl_tp_ord!($tp_type, $tp_type, tp_lt(l, r) => {
-            let $tp_lt_lhs_var = l.0;
-            let $tp_lt_rhs_var = r.0;
-            $tp_lt_expr
-        });
-        impl_tp_ord!($type, $tp_type, tp_lt(l, r) => {
-            let $tp_lt_lhs_var = *l;
-            let $tp_lt_rhs_var = r.0;
-            $tp_lt_expr
-        });
-        impl_tp_ord!($tp_type, $type, tp_lt(l, r) => {
-            let $tp_lt_lhs_var = l.0;
-            let $tp_lt_rhs_var = *r;
-            $tp_lt_expr
-        });
-
-        impl_tp_cond_swap_with_xor!($tp_type, $type);
-    }
-}
-
-/// A trait for performing equality tests on types with timing leak protection.
-///
-/// **Important**: implementations of this trait are only required to protect inputs that are already a
-/// timing-protected type. For example, `a.tp_eq(&b)` is allowed to leak `a` if `a` is a `u32`,
-/// instead of a timing-protected type like `TpU32`.
-///
-/// Ideally, this trait will be removed in the future if/when Rust allows overloading of the `==`
-/// and `!=` operators.
-pub trait TpEq<Rhs = Self>
-where
-    Rhs: ?Sized,
-{
-    /// Compare `self` with `other` for equality without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    ///
-    /// Equivalent to `!a.tp_not_eq(&other)`
-    fn tp_eq(&self, other: &Rhs) -> TpBool;
-
-    /// Compare `self` with `other` for inequality without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    ///
-    /// Equivalent to `!a.tp_eq(&other)`
-    fn tp_not_eq(&self, other: &Rhs) -> TpBool;
-}
-
-pub trait SliceTpEq<Rhs = Self>: TpEq<Rhs> + Sized {
-    fn slice_eq(a: &[Self], b: &[Rhs]) -> TpBool {
-        if a.len() != b.len() {
-            return TP_FALSE;
-        }
-
-        a.iter()
-            .zip(b.iter())
-            .fold(TP_TRUE, |prev, (a, b)| prev & a.tp_eq(b))
-    }
-
-    fn slice_not_eq(a: &[Self], b: &[Rhs]) -> TpBool {
-        if a.len() != b.len() {
-            return TP_FALSE;
-        }
-
-        a.iter()
-            .zip(b.iter())
-            .fold(TP_FALSE, |prev, (a, b)| prev | a.tp_not_eq(b))
-    }
-}
-
-impl<Lhs, Rhs> TpEq<[Rhs]> for [Lhs]
-where
-    Lhs: SliceTpEq<Rhs>,
-{
-    fn tp_eq(&self, other: &[Rhs]) -> TpBool {
-        Lhs::slice_eq(self, other)
-    }
-
-    fn tp_not_eq(&self, other: &[Rhs]) -> TpBool {
-        Lhs::slice_not_eq(self, other)
-    }
-}
-
-impl<Lhs, Rhs> TpEq<Vec<Rhs>> for Vec<Lhs>
-where
-    Lhs: SliceTpEq<Rhs>,
-{
-    #[inline(always)]
-    fn tp_eq(&self, other: &Vec<Rhs>) -> TpBool {
-        self[..].tp_eq(&other[..])
-    }
-
-    #[inline(always)]
-    fn tp_not_eq(&self, other: &Vec<Rhs>) -> TpBool {
-        self[..].tp_not_eq(&other[..])
-    }
-}
-
-/// A trait for performing comparisons on types with timing leak protection.
-///
-/// **Important**: implementations of this trait are only required to protect inputs that are already a
-/// timing-protected type. For example, `a.tp_lt(&b)` is allowed to leak `a` if `a` is a `u32`,
-/// instead of a timing-protected type like `TpU32`.
-///
-/// Ideally, this trait will be removed in the future if/when Rust allows overloading of the `<`,
-/// `>`, `<=`, and `>=` operators.
-pub trait TpOrd<Rhs = Self>
-where
-    Rhs: ?Sized,
-{
-    /// Compute `self < other` without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    fn tp_lt(&self, other: &Rhs) -> TpBool;
-
-    /// Compute `self <= other` without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    fn tp_lt_eq(&self, other: &Rhs) -> TpBool;
-
-    /// Compute `self > other` without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    fn tp_gt(&self, other: &Rhs) -> TpBool;
-
-    /// Compute `self >= other` without leaking the result.
-    /// **Important**: if either input is not a timing-protected type, this operation might leak the
-    /// value of that type. To prevent timing leaks, protect values before performing any operations
-    /// on them.
-    fn tp_gt_eq(&self, other: &Rhs) -> TpBool;
-}
-
-/// A trait for performing conditional swaps of two values without leaking whether the swap
-/// occurred.
-///
-/// For convenience, you may want to use the [`select`](struct.TpBool.html#method.select) or
-/// [`cond_swap`](struct.TpBool.html#method.cond_swap) methods on [`TpBool`](struct.TpBool.html)
-/// instead of using this trait directly:
-///
-/// ```
-/// # use timing_shield::*;
-/// let condition: TpBool;
-/// let mut a: TpU32;
-/// let mut b: TpU32;
-/// # condition = TpBool::protect(true);
-/// # a = TpU32::protect(5);
-/// # b = TpU32::protect(6);
-/// // ...
-/// condition.cond_swap(&mut a, &mut b);
-///
-/// // OR:
-/// let a_if_true = condition.select(a, b);
-/// # assert_eq!(a_if_true.expose(), a.expose());
-/// ```
-///
-/// This trait doesn't really make sense to implement on non-`Tp` types.
-pub trait TpCondSwap {
-    /// Swap `a` and `b` if and only if `condition` is true.
-    ///
-    /// Implementers of this trait must take care to avoid leaking whether the swap occurred.
-    fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self);
-}
-
-impl<T> TpCondSwap for [T]
-where
-    T: TpCondSwap,
-{
-    #[inline(always)]
-    fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self) {
-        if a.len() != b.len() {
-            panic!("cannot swap values of slices of unequal length");
-        }
-
-        for (a_elem, b_elem) in a.iter_mut().zip(b.iter_mut()) {
-            condition.cond_swap(a_elem, b_elem);
-        }
-    }
-}
-
-impl<T> TpCondSwap for Vec<T>
-where
-    T: TpCondSwap,
-{
-    #[inline(always)]
-    fn tp_cond_swap(condition: TpBool, a: &mut Self, b: &mut Self) {
-        condition.cond_swap(a.as_mut_slice(), b.as_mut_slice());
-    }
-}
-
-define_number_type!(TpU8, u8, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = (lhs as u32).wrapping_sub(rhs as u32);
-    TpBool((overflowing_iff_lt >> 31) as u8)
-}, methods {
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-
-define_number_type!(TpU16, u16, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = (lhs as u32).wrapping_sub(rhs as u32);
-    TpBool((overflowing_iff_lt >> 31) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-
-define_number_type!(TpU32, u32, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = (lhs as u64).wrapping_sub(rhs as u64);
-    TpBool((overflowing_iff_lt >> 63) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-
-define_number_type!(TpU64, u64, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = (lhs as u128).wrapping_sub(rhs as u128);
-    TpBool((overflowing_iff_lt >> 127) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-
-define_number_type!(TpI8, i8, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = ((lhs as i32).wrapping_sub(rhs as i32)) as u32;
-    TpBool((overflowing_iff_lt >> 31) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-impl_unary_op!(Neg, neg, TpI8, TpI8);
-
-define_number_type!(TpI16, i16, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = ((lhs as i32).wrapping_sub(rhs as i32)) as u32;
-    TpBool((overflowing_iff_lt >> 31) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-});
-impl_unary_op!(Neg, neg, TpI16, TpI16);
-
-define_number_type!(TpI32, i32, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = ((lhs as i64).wrapping_sub(rhs as i64)) as u64;
-    TpBool((overflowing_iff_lt >> 63) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI64, i64, as_i64);
-});
-impl_unary_op!(Neg, neg, TpI32, TpI32);
-
-define_number_type!(TpI64, i64, tp_lt(lhs, rhs) => {
-    let overflowing_iff_lt = ((lhs as i128).wrapping_sub(rhs as i128)) as u128;
-    TpBool((overflowing_iff_lt >> 127) as u8)
-}, methods {
-    impl_as!(TpU8,  u8,  as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8,  i8,  as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-});
-impl_unary_op!(Neg, neg, TpI64, TpI64);
-
-/// A boolean type that prevents its value from being leaked to attackers through timing
-/// information.
-///
-/// ```
-/// # use timing_shield::*;
-/// # let some_boolean = true;
-/// let protected = TpBool::protect(some_boolean);
-///
-/// // Use `protected` from now on instead of `some_boolean`
-/// ```
-///
-/// Use the `protect` method as early as possible in the computation for maximum protection:
-///
-/// ```
-/// # use timing_shield::*;
-/// # let some_boolean = true;
-/// // DANGEROUS:
-/// let badly_protected_boolean = TpU8::protect(some_boolean as u8);
-///
-/// // Safe:
-/// let protected = TpBool::protect(some_boolean).as_u8();
-/// # assert_eq!(protected.expose(), 1u8);
-///
-/// // DANGEROUS:
-/// # let byte1 = 1u8;
-/// # let byte2 = 2u8;
-/// let badly_protected_value = TpBool::protect(byte1 == byte2);
-/// # assert_eq!(badly_protected_value.expose(), false);
-///
-/// // Safe:
-/// let protected_bool = TpU8::protect(byte1).tp_eq(&TpU8::protect(byte2));
-/// # assert_eq!(protected_bool.expose(), false);
-/// ```
-///
-/// Note that `&` and `|` are provided instead of `&&` and `||` because the usual boolean
-/// short-circuiting behaviour leaks information about the values of the booleans.
-#[derive(Clone, Copy)]
-pub struct TpBool(u8);
-
-static TP_FALSE: TpBool = TpBool(0);
-static TP_TRUE: TpBool = TpBool(1);
-
-impl TpBool {
-    /// Hide `input` behind a protective abstraction to prevent the value from being used
-    /// in such a way that the value could leak out via a timing side channel.
-    ///
-    /// ```
-    /// # use timing_shield::*;
-    /// # let some_secret_bool = true;
-    /// let protected_bool = TpBool::protect(some_secret_bool);
-    ///
-    /// // Use `protected_bool` instead of `some_secret_bool` to avoid timing leaks
-    /// ```
-    #[inline(always)]
-    pub fn protect(input: bool) -> Self {
-        // `as u8` ensures value is 0 or 1
-        // LLVM IR: input_u8 = zext i1 input to i8
-        let input_u8 = input as u8;
-
-        // Place an optimization barrier to hide that the u8 was originally a bool
-        let input_u8 = optimization_barrier_u8(input_u8);
-
-        TpBool(input_u8)
-    }
-
-    impl_as!(TpU8, u8, as_u8);
-    impl_as!(TpU16, u16, as_u16);
-    impl_as!(TpU32, u32, as_u32);
-    impl_as!(TpU64, u64, as_u64);
-    impl_as!(TpI8, i8, as_i8);
-    impl_as!(TpI16, i16, as_i16);
-    impl_as!(TpI32, i32, as_i32);
-    impl_as!(TpI64, i64, as_i64);
-
-    /// Remove the timing protection and expose the raw boolean value.
-    /// Once the boolean is exposed, it is the library user's responsibility to prevent timing
-    /// leaks (if necessary). Note: this can be very difficult to do correctly with boolean values.
-    ///
-    /// Commonly, this method is used when a value is safe to make public (e.g. the result of a
-    /// signature verification).
-    #[inline(always)]
-    pub fn expose(self) -> bool {
-        let bool_as_u8: u8 = optimization_barrier_u8(self.0);
-
-        unsafe {
-            // Safe as long as TpBool correctly maintains the invariant that self.0 is 0 or 1
-            std::mem::transmute::<u8, bool>(bool_as_u8)
-        }
-    }
-
-    /// Constant-time conditional swap. Swaps `a` and `b` if this boolean is true, otherwise has no
-    /// effect. This operation is implemented without branching on the boolean value, and it will
-    /// not leak information about whether the values were swapped.
-    #[inline(always)]
-    pub fn cond_swap<T>(self, a: &mut T, b: &mut T)
-    where
-        T: TpCondSwap + ?Sized,
-    {
-        T::tp_cond_swap(self, a, b);
-    }
-
-    /// Returns one of the arguments, depending on the value of this boolean.
-    /// The return value is selected without branching on the boolean value, and no information
-    /// about which value was selected will be leaked.
-    #[inline(always)]
-    pub fn select<T>(self, when_true: T, when_false: T) -> T
-    where
-        T: TpCondSwap,
-    {
-        // TODO is this optimal?
-        // seems to compile to use NEG instead of DEC
-        // NEG clobbers the carry flag, so arguably DEC could be better
-
-        let mut result = when_false;
-        let mut replace_with = when_true;
-        self.cond_swap(&mut result, &mut replace_with);
-        result
-    }
+    };
 }
 
 impl Not for TpBool {
@@ -942,21 +261,13 @@ impl Not for TpBool {
 
     #[inline(always)]
     fn not(self) -> TpBool {
-        TpBool(self.0 ^ 0x01)
+        unsafe { TpBool::from_u8_unchecked(self.expose_u8_unprotected() ^ 0x01) }
     }
 }
 
-impl_bin_op!(BitAnd, bitand, TpBool, (l: TpBool) => l.0    , (r: TpBool) => r.0    );
-impl_bin_op!(BitAnd, bitand, TpBool, (l:   bool) => l as u8, (r: TpBool) => r.0    );
-impl_bin_op!(BitAnd, bitand, TpBool, (l: TpBool) => l.0    , (r:   bool) => r as u8);
-
-impl_bin_op!(BitOr, bitor, TpBool, (l: TpBool) => l.0    , (r: TpBool) => r.0    );
-impl_bin_op!(BitOr, bitor, TpBool, (l:   bool) => l as u8, (r: TpBool) => r.0    );
-impl_bin_op!(BitOr, bitor, TpBool, (l: TpBool) => l.0    , (r:   bool) => r as u8);
-
-impl_bin_op!(BitXor, bitxor, TpBool, (l: TpBool) => l.0    , (r: TpBool) => r.0    );
-impl_bin_op!(BitXor, bitxor, TpBool, (l:   bool) => l as u8, (r: TpBool) => r.0    );
-impl_bin_op!(BitXor, bitxor, TpBool, (l: TpBool) => l.0    , (r:   bool) => r as u8);
+impl_all_bin_op_for_bool!(BitAnd, bitand);
+impl_all_bin_op_for_bool!(BitOr, bitor);
+impl_all_bin_op_for_bool!(BitXor, bitxor);
 
 derive_assign_op!(BitAndAssign, bitand_assign, bitand, TpBool, TpBool);
 derive_assign_op!(BitAndAssign, bitand_assign, bitand, TpBool, bool);
@@ -966,68 +277,6 @@ derive_assign_op!(BitOrAssign, bitor_assign, bitor, TpBool, bool);
 
 derive_assign_op!(BitXorAssign, bitxor_assign, bitxor, TpBool, TpBool);
 derive_assign_op!(BitXorAssign, bitxor_assign, bitxor, TpBool, bool);
-
-impl_tp_eq!(TpBool, TpBool, (l, r) => {
-    l.bitxor(*r).not()
-});
-impl_tp_eq!(bool, TpBool, (l, r) => {
-    TpBool((*l as u8) ^ r.0).not()
-});
-impl_tp_eq!(TpBool, bool, (l, r) => {
-    TpBool(l.0 ^ (*r as u8)).not()
-});
-
-impl_slice_tp_eq!(
-    TpBool,
-    TpBool,
-    fold_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => !acc,
-    }
-    fold_not_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => acc,
-    }
-);
-impl_slice_tp_eq!(
-    bool,
-    TpBool,
-    fold_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => !acc,
-    }
-    fold_not_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => acc,
-    }
-);
-impl_slice_tp_eq!(
-    TpBool,
-    bool,
-    fold_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => !acc,
-    }
-    fold_not_eq {
-        initial: TP_FALSE,
-        fold: (acc, a, b) => acc | (*a ^ *b),
-        final: (acc) => acc,
-    }
-);
-
-impl TpCondSwap for TpBool {
-    #[inline(always)]
-    fn tp_cond_swap(condition: TpBool, a: &mut TpBool, b: &mut TpBool) {
-        let swapper = (*a ^ *b) & condition;
-        *a ^= swapper;
-        *b ^= swapper;
-    }
-}
 
 #[cfg(test)]
 mod tests {
